@@ -1,0 +1,149 @@
+/* 动画覆盖层样式 */
+.value-animation-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none; /* 允许点击穿透 */
+  z-index: 1000;
+  overflow: hidden;
+}
+
+/* 飞行的值样式 */
+.flying-value {
+  position: absolute;
+  pointer-events: none;
+  z-index: 1001;
+
+  /* 设置起始位置 */
+  left: var(--start-x);
+  top: var(--start-y);
+
+  /* 飞行动画 */
+  animation: flyValue 1200ms cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
+}
+
+@keyframes flyValue {
+  0% {
+    left: var(--start-x);
+    top: var(--start-y);
+    transform: translateX(-50%) translateY(-50%) scale(1);
+    opacity: 1;
+  }
+
+  10% {
+    transform: translateX(-50%) translateY(-50%) scale(1.2);
+    opacity: 1;
+  }
+
+  85% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(-50%) scale(1);
+  }
+
+  100% {
+    left: var(--end-x);
+    top: var(--end-y);
+    transform: translateX(-50%) translateY(-50%) scale(0.8);
+    opacity: 0;
+  }
+}
+
+/* 飞行值的内容 */
+.flying-value-content {
+  position: relative;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  padding: 8px 12px;
+  border-radius: 20px;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-weight: bold;
+  font-size: 14px;
+  white-space: nowrap;
+
+  /* 光晕效果 */
+  border: 2px solid rgba(255, 255, 255, 0.3);
+}
+
+.flying-value-text {
+  position: relative;
+  z-index: 2;
+}
+
+/* 拖尾效果 */
+.flying-value-trail {
+  position: absolute;
+  top: 50%;
+  left: -20px;
+  width: 40px;
+  height: 2px;
+  background: linear-gradient(to right, transparent, rgba(102, 126, 234, 0.8), transparent);
+  transform: translateY(-50%);
+  border-radius: 1px;
+  opacity: 0.7;
+}
+
+/* 不同操作类型的样式 */
+.flying-value-append .flying-value-content {
+  background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+}
+
+.flying-value-assignment .flying-value-content {
+  background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
+}
+
+.flying-value-insert .flying-value-content {
+  background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%);
+}
+
+.flying-value-extend .flying-value-content {
+  background: linear-gradient(135deg, #96fbc4 0%, #f9f047 100%);
+}
+
+/* 脉冲效果 */
+@keyframes pulse {
+  0%, 100% {
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+  }
+  50% {
+    box-shadow: 0 4px 25px rgba(102, 126, 234, 0.5);
+  }
+}
+
+.flying-value-content {
+  animation: pulse 600ms ease-in-out infinite;
+}
+
+/* 调试信息样式 */
+.animation-debug {
+  position: fixed;
+  top: 10px;
+  right: 10px;
+  background: rgba(0, 0, 0, 0.8);
+  color: white;
+  padding: 10px;
+  border-radius: 5px;
+  font-size: 12px;
+  font-family: monospace;
+  z-index: 9999;
+  pointer-events: auto;
+}
+
+.animation-debug div {
+  margin: 2px 0;
+}
+
+/* 响应式调整 */
+@media (max-width: 768px) {
+  .flying-value-content {
+    padding: 6px 10px;
+    font-size: 12px;
+  }
+
+  .flying-value-trail {
+    width: 30px;
+    left: -15px;
+  }
+}

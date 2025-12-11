@@ -194,6 +194,35 @@ print("个人统计:", individual_stats)
 print("全班统计:", class_statistics)
 """,
         "inputs": ""
+    },
+    {
+        "id": "animation_test",
+        "title": "🎬 动画效果测试",
+        "code": """# 动画效果测试
+# 创建初始变量
+a = 3
+b = "hello"
+c = 42
+
+# 创建容器
+my_list = [1, 2]
+my_dict = {"x": 10}
+
+# 测试list.append动画 - 值从变量a飞到列表
+my_list.append(a)
+
+# 测试字典赋值动画 - 值从变量b飞到字典
+my_dict["greeting"] = b
+
+# 测试更多list操作
+my_list.append(c)
+my_list.extend([4, 5])
+
+# 打印结果
+print("列表内容:", my_list)
+print("字典内容:", my_dict)
+""",
+        "inputs": ""
     }
 ]
 

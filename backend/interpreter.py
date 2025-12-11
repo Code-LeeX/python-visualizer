@@ -231,6 +231,9 @@ class PythonInterpreter:
 
     def execute_Assign(self, node: ast.Assign) -> None:
         """执行赋值语句"""
+        # 检测动画操作（在执行赋值前）
+        animation_data = self._detect_assignment_animation(node)
+
         value = self.execute(node.value)
 
         for target in node.targets:
@@ -243,6 +246,11 @@ class PythonInterpreter:
             elif isinstance(target, ast.Attribute):
                 obj = self.execute(target.value)
                 setattr(obj, target.attr, value)
+
+        # 如果检测到动画操作，记录动画信息
+        if animation_data:
+            animation_data['completed'] = True
+            self.hook.record_animation_step(animation_data)
 
     def execute_AnnAssign(self, node: ast.AnnAssign) -> None:
         """执行带注解的赋值"""
@@ -382,11 +390,21 @@ class PythonInterpreter:
 
     def execute_Call(self, node: ast.Call) -> Any:
         """执行函数调用"""
+        # 检测动画操作（在执行前）
+        animation_data = self._detect_animation_operation(node)
+
         func = self.execute(node.func)
         args = [self.execute(arg) for arg in node.args]
         kwargs = {kw.arg: self.execute(kw.value) for kw in node.keywords}
 
-        return func(*args, **kwargs)
+        result = func(*args, **kwargs)
+
+        # 如果检测到动画操作，记录动画信息
+        if animation_data:
+            animation_data['completed'] = True
+            self.hook.record_animation_step(animation_data)
+
+        return result
 
     def execute_BinOp(self, node: ast.BinOp) -> Any:
         """执行二元运算"""
@@ -522,3 +540,106 @@ class PythonInterpreter:
                 'value': None,
                 'display': str(value)
             }
+
+    def _detect_assignment_animation(self, node: ast.Assign) -> Optional[Dict[str, Any]]:
+        """检测赋值操作中的动画，如 dict[key] = variable"""
+        try:
+            # 检查是否是从变量赋值
+            if isinstance(node.value, ast.Name):
+                source_var = node.value.id
+                try:
+                    source_value = self.get_variable(source_var)
+                except NameError:
+                    return None
+
+                # 检查目标是否是下标赋值 (obj[key] = var)
+                for target in node.targets:
+                    if isinstance(target, ast.Subscript):
+                        target_obj = self._get_variable_name_from_node(target.value)
+                        if target_obj:
+                            return {
+                                'type': 'value_transfer',
+                                'operation': 'assignment',
+                                'source_variable': source_var,
+                                'source_value': source_value,
+                                'target_variable': target_obj,
+                                'line': node.lineno,
+                                'animation_type': 'assignment_operation'
+                            }
+
+            return None
+        except Exception as e:
+            print(f"Assignment animation detection error: {e}")
+            return None
+
+    def _detect_animation_operation(self, node: ast.Call) -> Optional[Dict[str, Any]]:
+        """检测动画操作，如 list.append(variable), dict[key] = variable 等"""
+        try:
+            # 检测方法调用，如 list.append(var)
+            if isinstance(node.func, ast.Attribute):
+                attr_name = node.func.attr
+
+                # 检测 list/array 操作
+                if attr_name in ['append', 'insert', 'extend'] and len(node.args) > 0:
+                    # 获取目标对象名（如 list_name）
+                    target_obj = self._get_variable_name_from_node(node.func.value)
+                    if target_obj:
+                        # 获取源变量名（传入的参数）
+                        source_var = None
+                        source_value = None
+
+                        for arg in node.args:
+                            if isinstance(arg, ast.Name):
+                                source_var = arg.id
+                                try:
+                                    source_value = self.get_variable(arg.id)
+                                except NameError:
+                                    continue
+                                break
+                            elif isinstance(arg, ast.Constant):
+                                source_value = arg.value
+                                break
+
+                        if source_var or source_value is not None:
+                            return {
+                                'type': 'value_transfer',
+                                'operation': attr_name,
+                                'source_variable': source_var,
+                                'source_value': source_value,
+                                'target_variable': target_obj,
+                                'line': node.lineno,
+                                'animation_type': 'list_operation'
+                            }
+
+                # 检测字典操作等其他方法调用
+                elif attr_name in ['update', 'setdefault']:
+                    target_obj = self._get_variable_name_from_node(node.func.value)
+                    if target_obj and len(node.args) > 0:
+                        return {
+                            'type': 'value_transfer',
+                            'operation': attr_name,
+                            'target_variable': target_obj,
+                            'line': node.lineno,
+                            'animation_type': 'dict_operation'
+                        }
+
+            return None
+        except Exception as e:
+            # 如果检测失败，不影响正常执行
+            print(f"Animation detection error: {e}")
+            return None
+
+    def _get_variable_name_from_node(self, node: ast.AST) -> Optional[str]:
+        """从AST节点中提取变量名"""
+        if isinstance(node, ast.Name):
+            return node.id
+        elif isinstance(node, ast.Attribute):
+            # 对于类似 obj.attr 的情况，返回 obj
+            base_name = self._get_variable_name_from_node(node.value)
+            if base_name:
+                return f"{base_name}.{node.attr}"
+        elif isinstance(node, ast.Subscript):
+            # 对于类似 obj[key] 的情况，返回 obj
+            return self._get_variable_name_from_node(node.value)
+
+        return None

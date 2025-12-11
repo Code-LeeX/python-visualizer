@@ -6,6 +6,7 @@ import './App.css';
 import CodeEditor from './components/CodeEditor';
 import VariableViewer from './components/VariableViewer';
 import ExecutionControls from './components/ExecutionControls';
+import ValueAnimationOverlay from './components/ValueAnimationOverlay';
 
 const API_BASE = 'http://localhost:3002';
 
@@ -16,6 +17,9 @@ function App() {
   const [socket, setSocket] = useState(null);
   const [executionState, setExecutionState] = useState('idle'); // idle, running, paused, error
   const [isStepMode, setIsStepMode] = useState(false); // 跟踪是否在步进模式
+  const [currentLine, setCurrentLine] = useState(null); // 当前执行行号
+  const [variablePositions, setVariablePositions] = useState({}); // 变量位置信息
+  const [animationData, setAnimationData] = useState(null); // 当前动画数据
 
   useEffect(() => {
     // 建立WebSocket连接
@@ -59,6 +63,26 @@ function App() {
     socketConnection.on('execution_step', (data) => {
       console.log('Execution step:', data);
       setVariables(data.variables || {});
+
+      // 检查是否包含动画数据
+      if (data.animation) {
+        console.log('🎬 [Frontend] Received animation data:', data.animation);
+        // 触发动画效果
+        setAnimationData(data.animation);
+      }
+
+      // 更新当前执行行号（只有当行号真正变化时才更新）
+      if (data.line) {
+        setCurrentLine(prevLine => {
+          if (prevLine !== data.line) {
+            console.log('Current execution line updated from', prevLine, 'to:', data.line);
+            return data.line;
+          } else {
+            console.log('Same line execution (different AST node):', data.line, 'node_type:', data.node_type);
+            return prevLine; // 保持原来的行号，不触发重新渲染
+          }
+        });
+      }
       // 通过检查当前状态来判断模式
       setExecutionState(current => {
         console.log('execution_step: current state:', current);
@@ -77,6 +101,7 @@ function App() {
       setVariables(data.result?.variables || {});
       setExecutionState('idle');
       setIsStepMode(false);
+      setCurrentLine(null); // 清除当前行号高亮
     });
 
     // 监听执行错误事件
@@ -84,6 +109,7 @@ function App() {
       console.error('Execution error:', data.error);
       setExecutionState('error');
       setIsStepMode(false);
+      setCurrentLine(null); // 清除当前行号高亮
     });
 
     // 监听执行控制事件（暂停、恢复、停止等）
@@ -138,7 +164,7 @@ function App() {
   };
 
   const handleStepCode = () => {
-    console.log('🎯 [Frontend] handleStepCode called, current state:', executionState, 'socket:', !!socket);
+    console.log('🎯 [Frontend] handleStepCode called, current state:', executionState, 'isStepMode:', isStepMode, 'socket:', !!socket, 'currentLine:', currentLine);
     if (!code.trim()) {
       console.log('🎯 [Frontend] No code to execute');
       return;
@@ -161,10 +187,13 @@ function App() {
       };
       console.log('🎯 [Frontend] Emitting parse_code event with payload:', payload);
       socket.emit('parse_code', payload);
-    } else {
+    } else if (executionState === 'paused') {
       // 如果已经在步进模式中，继续下一步
-      console.log('🎯 [Frontend] Continuing to next step...');
+      console.log('🎯 [Frontend] Continuing to next step via step_next...');
       socket.emit('step_next');
+      console.log('🎯 [Frontend] step_next event emitted');
+    } else {
+      console.log('🎯 [Frontend] Cannot step - execution state is:', executionState);
     }
   };
 
@@ -172,9 +201,21 @@ function App() {
     setVariables({});
     setExecutionState('idle');
     setIsStepMode(false); // 重置步进模式
+    setCurrentLine(null); // 清除当前行号高亮
     if (socket) {
       socket.emit('reset');
     }
+  };
+
+  const handleVariablePositionsUpdate = (positions) => {
+    setVariablePositions(positions);
+    console.log('📍 [App] Variable positions updated:', positions);
+  };
+
+  const handleAnimationComplete = (animationId) => {
+    console.log('🎬 [App] Animation completed:', animationId);
+    // 清除动画数据，防止重复动画
+    setAnimationData(null);
   };
 
   return (
@@ -186,12 +227,13 @@ function App() {
         </div>
       </header>
 
-      <main className="App-main">
+      <main className="App-main" style={{ position: 'relative' }}>
         <div className="left-panel">
           <CodeEditor
             value={code}
             onChange={setCode}
             disabled={executionState === 'running'}
+            currentLine={currentLine}
           />
 
           <ExecutionControls
@@ -203,8 +245,18 @@ function App() {
         </div>
 
         <div className="right-panel">
-          <VariableViewer variables={variables} />
+          <VariableViewer
+            variables={variables}
+            onVariablePositionsUpdate={handleVariablePositionsUpdate}
+          />
         </div>
+
+        {/* 动画覆盖层 */}
+        <ValueAnimationOverlay
+          animationData={animationData}
+          variablePositions={variablePositions}
+          onAnimationComplete={handleAnimationComplete}
+        />
       </main>
     </div>
   );

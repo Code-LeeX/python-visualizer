@@ -264,27 +264,43 @@ class ExecutionManager:
         print(f"🔄 [ExecutionManager] original_callback is: {original_callback}")
         self.step_wait_event = threading.Event()
 
-        # 跟踪是否是第一步
+        # 跟踪是否是第一步和上一步的行号
         self.is_first_step = True
+        self.last_emitted_line = None
 
         def step_callback(step_data):
-            print(f"🔄 [StepIterator] step_callback called with step_data line: {step_data.get('line', 'N/A')}")
+            current_line = step_data.get('line')
+            print(f"🔄 [StepIterator] step_callback called with step_data line: {current_line}, node_type: {step_data.get('node_type')}")
+
+            # 在步进模式下，跳过重复的行号（但仍然更新变量）
+            should_emit_and_wait = True
+            if self.step_mode and self.is_running:
+                if current_line == self.last_emitted_line:
+                    print(f"🔄 [StepIterator] Skipping duplicate line {current_line} in step mode")
+                    should_emit_and_wait = False
+                else:
+                    self.last_emitted_line = current_line
+                    print(f"🔄 [StepIterator] New line {current_line}, will emit and wait")
+
+            # 总是发送数据到前端（用于变量更新）
             if original_callback:
                 print("🔄 [StepIterator] Calling original callback")
                 original_callback(step_data)
 
-            # 如果是第一步，直接显示不等待；后续步骤需要等待用户输入
-            if self.step_mode and self.is_running:
+            # 在步进模式下，只为新行号等待用户输入
+            if self.step_mode and self.is_running and should_emit_and_wait:
                 if self.is_first_step:
                     print("🔄 [StepIterator] First step - displaying immediately without waiting")
                     self.is_first_step = False
                 else:
                     print(f"🔄 [StepIterator] Step mode active, waiting for step_next... (step_mode={self.step_mode}, is_running={self.is_running})")
+                    # 确保在等待前先清除事件状态
+                    self.step_wait_event.clear()
+                    print("🔄 [StepIterator] Event cleared, now waiting...")
                     self.step_wait_event.wait()  # 等待step_next调用
                     print("🔄 [StepIterator] Received step_next signal, continuing...")
-                    self.step_wait_event.clear()  # 重置事件
             else:
-                print(f"🔄 [StepIterator] Not waiting - step_mode={self.step_mode}, is_running={self.is_running}")
+                print(f"🔄 [StepIterator] Not waiting - step_mode={self.step_mode}, is_running={self.is_running}, should_emit_and_wait={should_emit_and_wait}")
 
         hook.emit_callback = step_callback
 
@@ -359,7 +375,11 @@ class ExecutionManager:
         """单步执行下一步"""
         print(f"🔄 [ExecutionManager] step_next called - current_execution: {bool(self.current_execution)}, step_mode: {self.step_mode}, is_running: {self.is_running}")
 
-        if not self.current_execution or not self.step_mode:
+        if not self.current_execution:
+            print("🔄 [ExecutionManager] No current execution context")
+            return {'success': False, 'message': 'No execution in progress'}
+
+        if not self.step_mode:
             print("🔄 [ExecutionManager] Not in step mode")
             return {'success': False, 'message': 'Not in step mode'}
 
@@ -368,9 +388,10 @@ class ExecutionManager:
             return {'success': False, 'message': 'No execution in progress'}
 
         # 触发继续执行下一步
-        if hasattr(self, 'step_wait_event'):
-            print("🔄 [ExecutionManager] Triggering step_wait_event")
+        if hasattr(self, 'step_wait_event') and self.step_wait_event:
+            print(f"🔄 [ExecutionManager] Triggering step_wait_event (is_set: {self.step_wait_event.is_set()})")
             self.step_wait_event.set()
+            print("🔄 [ExecutionManager] step_wait_event.set() completed")
             return {'success': True, 'message': 'Continuing to next step'}
         else:
             print("🔄 [ExecutionManager] Step mechanism not available")

@@ -37,6 +37,29 @@ class ExecutionHook:
 
         return step
 
+    def record_animation_step(self, animation_data: dict):
+        """记录动画步骤"""
+        # 将动画数据添加到当前步骤中
+        if self.steps:
+            # 添加到最近的步骤
+            self.steps[-1]['animation'] = animation_data
+            print(f"🎬 [Animation] Recorded animation for {animation_data.get('operation')}: {animation_data.get('source_variable')} -> {animation_data.get('target_variable')}")
+
+            # 如果设置了回调函数，实时发送动画步骤
+            if self.emit_callback:
+                # 创建专门的动画事件
+                animation_event = {
+                    'step': self.step_count,
+                    'line': animation_data.get('line'),
+                    'node_type': 'Animation',
+                    'description': f"Animation: {animation_data.get('operation')}",
+                    'variables': dict(self.variables),
+                    'call_stack': list(self.call_stack),
+                    'animation': animation_data,
+                    'timestamp': self.step_count
+                }
+                self.emit_callback(animation_event)
+
 class CodeAnalyzer(ast.NodeVisitor):
     """代码分析器 - 分析AST结构并提取信息"""
 

@@ -1,7 +1,57 @@
-import React from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import './VariableViewer.css';
 
-const VariableViewer = ({ variables }) => {
+const VariableViewer = ({ variables, onVariablePositionsUpdate }) => {
+  const variableRefs = useRef({});
+  const containerRef = useRef(null);
+  const [variablePositions, setVariablePositions] = useState({});
+
+  // 计算变量位置的效果钩子
+  useEffect(() => {
+    const updatePositions = () => {
+      const newPositions = {};
+      const containerRect = containerRef.current?.getBoundingClientRect();
+
+      if (containerRect) {
+        Object.entries(variableRefs.current).forEach(([varId, ref]) => {
+          if (ref && ref.current) {
+            const rect = ref.current.getBoundingClientRect();
+            const relativePosition = {
+              top: rect.top - containerRect.top,
+              left: rect.left - containerRect.left,
+              width: rect.width,
+              height: rect.height,
+              centerX: rect.left - containerRect.left + rect.width / 2,
+              centerY: rect.top - containerRect.top + rect.height / 2,
+              absoluteX: rect.left,
+              absoluteY: rect.top
+            };
+            newPositions[varId] = relativePosition;
+            console.log(`📍 [VariableViewer] Position for ${varId}:`, relativePosition);
+          }
+        });
+
+        setVariablePositions(newPositions);
+
+        // 通知父组件位置更新
+        if (onVariablePositionsUpdate) {
+          onVariablePositionsUpdate(newPositions);
+        }
+      }
+    };
+
+    // 延迟计算以确保DOM更新完成
+    const timer = setTimeout(updatePositions, 100);
+
+    // 窗口大小变化时重新计算
+    window.addEventListener('resize', updatePositions);
+
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('resize', updatePositions);
+    };
+  }, [variables, onVariablePositionsUpdate]);
+
   const renderVariableValue = (value, type) => {
     if (Array.isArray(value)) {
       return (
@@ -63,7 +113,7 @@ const VariableViewer = ({ variables }) => {
   };
 
   return (
-    <div className="variable-viewer">
+    <div className="variable-viewer" ref={containerRef}>
       <h3>🔍 变量监控</h3>
 
       {Object.keys(variables).length === 0 ? (
@@ -107,8 +157,21 @@ const VariableViewer = ({ variables }) => {
                     const safeType = varData.type || 'unknown';
                     const safeValue = varData.value !== undefined ? varData.value : varData;
 
+                    // 创建变量的唯一ID（包含作用域信息）
+                    const varId = `${scope}.${varName}`;
+
+                    // 确保为该变量创建ref
+                    if (!variableRefs.current[varId]) {
+                      variableRefs.current[varId] = React.createRef();
+                    }
+
                     return (
-                      <div key={varName} className="variable-item">
+                      <div
+                        key={varName}
+                        className="variable-item"
+                        ref={variableRefs.current[varId]}
+                        data-variable-id={varId}
+                      >
                         <div className="variable-header">
                           <span className="variable-icon">
                             {getVariableTypeIcon(safeType)}

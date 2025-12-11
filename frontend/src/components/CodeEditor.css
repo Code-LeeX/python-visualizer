@@ -83,6 +83,92 @@
   font-style: italic;
 }
 
+/* 新的代码编辑器容器样式 */
+.code-editor-container {
+  position: relative;
+  flex: 1;
+  background: #fafafa;
+}
+
+.code-display {
+  display: flex;
+  min-height: 400px;
+  background: #fafafa;
+}
+
+.line-numbers {
+  background: #f1f3f4;
+  padding: 1.5rem 0.5rem 1.5rem 1rem;
+  border-right: 1px solid #dee2e6;
+  min-width: 50px;
+  user-select: none;
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 14px;
+  line-height: 1.6;
+  color: #6c757d;
+}
+
+.line-number {
+  text-align: right;
+  padding-right: 0.5rem;
+  transition: all 0.2s ease;
+}
+
+.line-number.highlight {
+  background: #ffeaa7;
+  color: #2d3436;
+  font-weight: bold;
+  border-radius: 4px;
+  margin: -2px -4px;
+  padding: 2px 8px 2px 4px;
+}
+
+.code-lines {
+  flex: 1;
+  padding: 1.5rem 1.5rem 1.5rem 1rem;
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 14px;
+  line-height: 1.6;
+  color: #2c3e50;
+}
+
+.code-line {
+  white-space: pre-wrap;
+  word-break: break-all;
+  transition: all 0.2s ease;
+}
+
+.code-line.highlight {
+  background: #ffeaa7;
+  margin: -2px -8px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border-left: 4px solid #fdcb6e;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+.code-textarea-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  padding: 1.5rem;
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 14px;
+  line-height: 1.6;
+  border: none;
+  background: transparent;
+  color: transparent;
+  resize: none;
+  outline: none;
+  overflow: hidden;
+}
+
+.code-textarea-overlay:disabled {
+  cursor: not-allowed;
+}
+
 .editor-footer {
   padding: 0.75rem 1.5rem;
   background: #f8f9fa;
@@ -111,5 +197,22 @@
   .code-textarea {
     min-height: 300px;
     font-size: 13px;
+  }
+
+  .code-display {
+    min-height: 300px;
+  }
+
+  .line-numbers, .code-lines {
+    font-size: 13px;
+  }
+
+  .line-numbers {
+    min-width: 40px;
+    padding: 1rem 0.3rem 1rem 0.5rem;
+  }
+
+  .code-lines {
+    padding: 1rem 1rem 1rem 0.5rem;
   }
 }
