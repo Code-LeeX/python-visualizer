@@ -5,11 +5,42 @@ const ValueAnimationOverlay = ({ animationData, variablePositions, onAnimationCo
   const [activeAnimations, setActiveAnimations] = useState([]);
   const containerRef = useRef(null);
   const animationIdRef = useRef(0);
+  const processedAnimations = useRef(new Set()); // 防止重复动画
 
   useEffect(() => {
+    // 如果animationData为null，清空处理记录（用于重置）
+    if (!animationData) {
+      processedAnimations.current.clear();
+      console.log('🎬 [ValueAnimationOverlay] Cleared processed animations');
+      return;
+    }
+
     if (animationData && variablePositions) {
       console.log('🎬 [ValueAnimationOverlay] Starting animation:', animationData);
       console.log('🎬 [ValueAnimationOverlay] Variable positions:', variablePositions);
+
+      // 创建动画的唯一标识符，防止重复动画
+      const animationKey = JSON.stringify({
+        line: animationData.line,
+        operation: animationData.operation,
+        source_variable: animationData.source_variable,
+        target_variable: animationData.target_variable,
+        source_value: animationData.source_value,
+        step_count: animationData.step_count
+      });
+
+      console.log('🎬 [ValueAnimationOverlay] Animation key:', animationKey);
+      console.log('🎬 [ValueAnimationOverlay] Processed animations count:', processedAnimations.current.size);
+
+      // 检查是否已经处理过相同的动画
+      if (processedAnimations.current.has(animationKey)) {
+        console.log('🎬 [ValueAnimationOverlay] Skipping duplicate animation');
+        return;
+      }
+
+      // 记录已处理的动画
+      processedAnimations.current.add(animationKey);
+      console.log('🎬 [ValueAnimationOverlay] Added to processed animations, new count:', processedAnimations.current.size);
 
       const sourceVarId = `global.${animationData.source_variable}`;
       const targetVarId = `global.${animationData.target_variable}`;
@@ -19,19 +50,27 @@ const ValueAnimationOverlay = ({ animationData, variablePositions, onAnimationCo
 
       if (sourcePos && targetPos) {
         const animationId = animationIdRef.current++;
+
+        // Use absolute coordinates instead of relative coordinates
+        // since the animation overlay is positioned absolutely over the page
+        const startX = sourcePos.absoluteX + sourcePos.width / 2;
+        const startY = sourcePos.absoluteY + sourcePos.height / 2;
+        const endX = targetPos.absoluteX + targetPos.width / 2;
+        const endY = targetPos.absoluteY + targetPos.height / 2;
+
         const newAnimation = {
           id: animationId,
           value: animationData.source_value,
-          startX: sourcePos.centerX,
-          startY: sourcePos.centerY,
-          endX: targetPos.centerX,
-          endY: targetPos.centerY,
+          startX: startX,
+          startY: startY,
+          endX: endX,
+          endY: endY,
           operation: animationData.operation,
           animationType: animationData.animation_type,
           timestamp: Date.now()
         };
 
-        console.log('🎬 [ValueAnimationOverlay] Animation coordinates:', newAnimation);
+        console.log('🎬 [ValueAnimationOverlay] Creating animation with coordinates:', newAnimation);
 
         setActiveAnimations(prev => [...prev, newAnimation]);
 

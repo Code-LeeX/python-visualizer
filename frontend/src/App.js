@@ -20,6 +20,7 @@ function App() {
   const [currentLine, setCurrentLine] = useState(null); // 当前执行行号
   const [variablePositions, setVariablePositions] = useState({}); // 变量位置信息
   const [animationData, setAnimationData] = useState(null); // 当前动画数据
+  const [iterationStack, setIterationStack] = useState([]); // 遍历状态栈，支持嵌套循环
 
   useEffect(() => {
     // 建立WebSocket连接
@@ -69,6 +70,12 @@ function App() {
         console.log('🎬 [Frontend] Received animation data:', data.animation);
         // 触发动画效果
         setAnimationData(data.animation);
+      }
+
+      // 检查是否包含遍历状态数据
+      if (data.iteration_stack !== undefined) {
+        console.log('🔄 [Frontend] Received iteration stack:', data.iteration_stack);
+        setIterationStack(data.iteration_stack || []);
       }
 
       // 更新当前执行行号（只有当行号真正变化时才更新）
@@ -248,6 +255,7 @@ function App() {
           <VariableViewer
             variables={variables}
             onVariablePositionsUpdate={handleVariablePositionsUpdate}
+            iterationStack={iterationStack}
           />
         </div>
 

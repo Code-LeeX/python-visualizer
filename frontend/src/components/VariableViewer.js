@@ -1,10 +1,12 @@
 import React, { useRef, useEffect, useState } from 'react';
 import './VariableViewer.css';
 
-const VariableViewer = ({ variables, onVariablePositionsUpdate }) => {
+const VariableViewer = ({ variables, onVariablePositionsUpdate, iterationStack }) => {
   const variableRefs = useRef({});
   const containerRef = useRef(null);
   const [variablePositions, setVariablePositions] = useState({});
+  const [hiddenVariables, setHiddenVariables] = useState(new Set()); // 隐藏的变量集合
+  const [showHiddenVariables, setShowHiddenVariables] = useState(false); // 是否显示隐藏变量
 
   // 计算变量位置的效果钩子
   useEffect(() => {
@@ -52,7 +54,33 @@ const VariableViewer = ({ variables, onVariablePositionsUpdate }) => {
     };
   }, [variables, onVariablePositionsUpdate]);
 
-  const renderVariableValue = (value, type) => {
+  // 隐藏变量
+  const hideVariable = (scope, varName) => {
+    const varId = `${scope}.${varName}`;
+    setHiddenVariables(prev => new Set([...prev, varId]));
+  };
+
+  // 恢复显示变量
+  const showVariable = (scope, varName) => {
+    const varId = `${scope}.${varName}`;
+    setHiddenVariables(prev => {
+      const newSet = new Set(prev);
+      newSet.delete(varId);
+      return newSet;
+    });
+  };
+
+  // 切换显示隐藏变量
+  const toggleShowHiddenVariables = () => {
+    setShowHiddenVariables(prev => !prev);
+  };
+
+  const renderVariableValue = (value, type, varName) => {
+    // 调试信息
+    if (iterationStack && iterationStack.length > 0 && console.log) {
+      console.log('🔄 [VariableViewer] Rendering', varName, 'with iteration stack:', iterationStack);
+    }
+
     if (Array.isArray(value)) {
       return (
         <div className="array-visualization">
@@ -61,12 +89,217 @@ const VariableViewer = ({ variables, onVariablePositionsUpdate }) => {
             <span className="array-length">[{value.length}]</span>
           </div>
           <div className="array-elements">
-            {value.map((item, index) => (
-              <div key={index} className="array-element">
-                <div className="element-index">{index}</div>
-                <div className="element-value">{JSON.stringify(item)}</div>
-              </div>
-            ))}
+            {value.map((item, index) => {
+              // 检查是否是当前遍历的元素，支持多层嵌套、双指针和切片范围
+              let iterationInfo = null;
+              let multiIndexInfo = null;
+              let sliceRangeInfo = null;
+
+              if (iterationStack && iterationStack.length > 0) {
+                // 查找匹配的迭代上下文（单指针）
+                iterationInfo = iterationStack.find(context =>
+                  context.container === varName &&
+                  context.current_index === index &&
+                  context.current_index >= 0  // 确保已开始遍历
+                );
+
+                // 查找多指针访问
+                for (let context of iterationStack) {
+                  if (context.multi_indices && context.multi_indices[varName]) {
+                    const multiIndices = context.multi_indices[varName];
+
+                    // 检查是否是多指针模式
+                    if (multiIndices.type === 'multi_index') {
+                      const pointerIndex = multiIndices.indices.indexOf(index);
+                      if (pointerIndex !== -1) {
+                        multiIndexInfo = {
+                          level: context.level,
+                          pointerType: pointerIndex, // 0=第一个指针, 1=第二个指针
+                          pointerVar: multiIndices.index_vars[pointerIndex],
+                          totalPointers: multiIndices.indices.length
+                        };
+                        break;
+                      }
+                    }
+
+                    // 检查是否是切片范围模式
+                    else if (multiIndices.type === 'slice_range') {
+                      const startIdx = multiIndices.start_index;
+                      const endIdx = multiIndices.end_index;
+                      if (index >= startIdx && index < endIdx) {
+                        sliceRangeInfo = {
+                          level: context.level,
+                          startVar: multiIndices.start_var,
+                          endVar: multiIndices.end_var,
+                          startIndex: startIdx,
+                          endIndex: endIdx,
+                          isStartBoundary: index === startIdx,
+                          isEndBoundary: index === endIdx - 1
+                        };
+                        break;
+                      }
+                    }
+                  }
+                }
+              }
+
+              const isCurrentIteration = !!(iterationInfo || multiIndexInfo);
+              const isSliceRange = !!sliceRangeInfo;
+              const iterationLevel = iterationInfo ? iterationInfo.level : (multiIndexInfo ? multiIndexInfo.level : (sliceRangeInfo ? sliceRangeInfo.level : 0));
+              const pointerType = multiIndexInfo ? multiIndexInfo.pointerType : 0;
+
+              // 构建CSS类名
+              let cssClasses = ['array-element'];
+
+              if (isCurrentIteration) {
+                cssClasses.push('current-iteration', `level-${iterationLevel}`);
+              }
+
+              if (multiIndexInfo) {
+                cssClasses.push(`pointer-${pointerType}`);
+              }
+
+              if (isSliceRange) {
+                cssClasses.push('slice-range');
+                if (sliceRangeInfo.isStartBoundary) cssClasses.push('slice-start');
+                if (sliceRangeInfo.isEndBoundary) cssClasses.push('slice-end');
+              }
+
+              // 构建title信息
+              let title = '';
+              if (multiIndexInfo) {
+                title = `Pointer: ${multiIndexInfo.pointerVar}`;
+              } else if (sliceRangeInfo) {
+                title = `Slice: ${sliceRangeInfo.startVar}[${sliceRangeInfo.startIndex}] to ${sliceRangeInfo.endVar}[${sliceRangeInfo.endIndex}]`;
+              }
+
+              return (
+                <div
+                  key={index}
+                  className={cssClasses.join(' ')}
+                  data-iteration-level={iterationLevel}
+                  data-pointer-type={pointerType}
+                  title={title}
+                >
+                  <div className="element-index">{index}</div>
+                  <div className="element-value">{JSON.stringify(item)}</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      );
+    }
+
+    // 字符串可视化 - 支持字符级别的索引遍历
+    if (type === 'str' || typeof value === 'string') {
+      // 将字符串转换为字符数组进行处理
+      const chars = Array.from(value);
+
+      return (
+        <div className="string-visualization">
+          <div className="string-header">
+            <span className="string-type">字符串</span>
+            <span className="string-length">[{chars.length}]</span>
+          </div>
+          <div className="string-characters">
+            {chars.map((char, index) => {
+              // 检查是否是当前遍历的字符，支持多层嵌套、双指针和切片范围
+              let iterationInfo = null;
+              let multiIndexInfo = null;
+              let sliceRangeInfo = null;
+
+              if (iterationStack && iterationStack.length > 0) {
+                // 查找匹配的迭代上下文（单指针）
+                iterationInfo = iterationStack.find(context =>
+                  context.container === varName &&
+                  context.current_index === index &&
+                  context.current_index >= 0  // 确保已开始遍历
+                );
+
+                // 查找多指针访问
+                for (let context of iterationStack) {
+                  if (context.multi_indices && context.multi_indices[varName]) {
+                    const multiIndices = context.multi_indices[varName];
+
+                    // 检查是否是多指针模式
+                    if (multiIndices.type === 'multi_index') {
+                      const pointerIndex = multiIndices.indices.indexOf(index);
+                      if (pointerIndex !== -1) {
+                        multiIndexInfo = {
+                          level: context.level,
+                          pointerType: pointerIndex, // 0=第一个指针, 1=第二个指针
+                          pointerVar: multiIndices.index_vars[pointerIndex],
+                          totalPointers: multiIndices.indices.length
+                        };
+                        break;
+                      }
+                    }
+
+                    // 检查是否是切片范围模式
+                    else if (multiIndices.type === 'slice_range') {
+                      const startIdx = multiIndices.start_index;
+                      const endIdx = multiIndices.end_index;
+                      if (index >= startIdx && index < endIdx) {
+                        sliceRangeInfo = {
+                          level: context.level,
+                          startVar: multiIndices.start_var,
+                          endVar: multiIndices.end_var,
+                          startIndex: startIdx,
+                          endIndex: endIdx,
+                          isStartBoundary: index === startIdx,
+                          isEndBoundary: index === endIdx - 1
+                        };
+                        break;
+                      }
+                    }
+                  }
+                }
+              }
+
+              const isCurrentIteration = !!(iterationInfo || multiIndexInfo);
+              const isSliceRange = !!sliceRangeInfo;
+              const iterationLevel = iterationInfo ? iterationInfo.level : (multiIndexInfo ? multiIndexInfo.level : (sliceRangeInfo ? sliceRangeInfo.level : 0));
+              const pointerType = multiIndexInfo ? multiIndexInfo.pointerType : 0;
+
+              // 构建CSS类名
+              let cssClasses = ['string-character'];
+
+              if (isCurrentIteration) {
+                cssClasses.push('current-iteration', `level-${iterationLevel}`);
+              }
+
+              if (multiIndexInfo) {
+                cssClasses.push(`pointer-${pointerType}`);
+              }
+
+              if (isSliceRange) {
+                cssClasses.push('slice-range');
+                if (sliceRangeInfo.isStartBoundary) cssClasses.push('slice-start');
+                if (sliceRangeInfo.isEndBoundary) cssClasses.push('slice-end');
+              }
+
+              // 构建title信息
+              let title = '';
+              if (multiIndexInfo) {
+                title = `Pointer: ${multiIndexInfo.pointerVar}`;
+              } else if (sliceRangeInfo) {
+                title = `Slice: ${sliceRangeInfo.startVar}[${sliceRangeInfo.startIndex}] to ${sliceRangeInfo.endVar}[${sliceRangeInfo.endIndex}]`;
+              }
+
+              return (
+                <div
+                  key={index}
+                  className={cssClasses.join(' ')}
+                  data-iteration-level={iterationLevel}
+                  data-pointer-type={pointerType}
+                  title={title}
+                >
+                  <div className="char-index">{index}</div>
+                  <div className="char-value">{char === ' ' ? '␣' : char}</div>
+                </div>
+              );
+            })}
           </div>
         </div>
       );
@@ -104,6 +337,7 @@ const VariableViewer = ({ variables, onVariablePositionsUpdate }) => {
       'int': '🔢',
       'float': '📊',
       'str': '📝',
+      'string': '📝',  // 支持 string 类型别名
       'bool': '☑️',
       'list': '📋',
       'dict': '📖',
@@ -114,7 +348,18 @@ const VariableViewer = ({ variables, onVariablePositionsUpdate }) => {
 
   return (
     <div className="variable-viewer" ref={containerRef}>
-      <h3>🔍 变量监控</h3>
+      <div className="variable-viewer-header">
+        <h3>🔍 变量监控</h3>
+        {hiddenVariables.size > 0 && (
+          <button
+            className="toggle-hidden-btn"
+            onClick={toggleShowHiddenVariables}
+            title={showHiddenVariables ? "隐藏已隐藏的变量" : "显示已隐藏的变量"}
+          >
+            {showHiddenVariables ? "👁️" : "👁️‍🗨️"} {hiddenVariables.size}
+          </button>
+        )}
+      </div>
 
       {Object.keys(variables).length === 0 ? (
         <div className="no-variables">
@@ -136,14 +381,44 @@ const VariableViewer = ({ variables, onVariablePositionsUpdate }) => {
               ) : (
                 <div className="scope-variables">
                   {Object.entries(scopeVars).map(([varName, varData]) => {
+                    // 创建变量的唯一ID（包含作用域信息）
+                    const varId = `${scope}.${varName}`;
+                    const isHidden = hiddenVariables.has(varId);
+
+                    // 如果变量被隐藏且不显示隐藏变量，则跳过
+                    if (isHidden && !showHiddenVariables) {
+                      return null;
+                    }
+
                     // 安全检查：确保 varData 不为 null 且有必要的属性
                     if (!varData || typeof varData !== 'object') {
                       return (
-                        <div key={varName} className="variable-item">
+                        <div key={varName} className={`variable-item ${isHidden ? 'hidden-variable' : ''}`}>
                           <div className="variable-header">
-                            <span className="variable-icon">❓</span>
-                            <span className="variable-name">{varName}</span>
-                            <span className="variable-type">unknown</span>
+                            <div className="variable-info">
+                              <span className="variable-icon">❓</span>
+                              <span className="variable-name">{varName}</span>
+                              <span className="variable-type">unknown</span>
+                            </div>
+                            <div className="variable-controls">
+                              {isHidden ? (
+                                <button
+                                  className="show-variable-btn"
+                                  onClick={() => showVariable(scope, varName)}
+                                  title="显示变量"
+                                >
+                                  👁️
+                                </button>
+                              ) : (
+                                <button
+                                  className="hide-variable-btn"
+                                  onClick={() => hideVariable(scope, varName)}
+                                  title="隐藏变量"
+                                >
+                                  👁️‍🗨️
+                                </button>
+                              )}
+                            </div>
                           </div>
                           <div className="variable-content">
                             <div className="basic-value">
@@ -157,9 +432,6 @@ const VariableViewer = ({ variables, onVariablePositionsUpdate }) => {
                     const safeType = varData.type || 'unknown';
                     const safeValue = varData.value !== undefined ? varData.value : varData;
 
-                    // 创建变量的唯一ID（包含作用域信息）
-                    const varId = `${scope}.${varName}`;
-
                     // 确保为该变量创建ref
                     if (!variableRefs.current[varId]) {
                       variableRefs.current[varId] = React.createRef();
@@ -168,20 +440,41 @@ const VariableViewer = ({ variables, onVariablePositionsUpdate }) => {
                     return (
                       <div
                         key={varName}
-                        className="variable-item"
+                        className={`variable-item ${isHidden ? 'hidden-variable' : ''}`}
                         ref={variableRefs.current[varId]}
                         data-variable-id={varId}
                       >
                         <div className="variable-header">
-                          <span className="variable-icon">
-                            {getVariableTypeIcon(safeType)}
-                          </span>
-                          <span className="variable-name">{varName}</span>
-                          <span className="variable-type">{safeType}</span>
+                          <div className="variable-info">
+                            <span className="variable-icon">
+                              {getVariableTypeIcon(safeType)}
+                            </span>
+                            <span className="variable-name">{varName}</span>
+                            <span className="variable-type">{safeType}</span>
+                          </div>
+                          <div className="variable-controls">
+                            {isHidden ? (
+                              <button
+                                className="show-variable-btn"
+                                onClick={() => showVariable(scope, varName)}
+                                title="显示变量"
+                              >
+                                👁️
+                              </button>
+                            ) : (
+                              <button
+                                className="hide-variable-btn"
+                                onClick={() => hideVariable(scope, varName)}
+                                title="隐藏变量"
+                              >
+                                👁️‍🗨️
+                              </button>
+                            )}
+                          </div>
                         </div>
 
                         <div className="variable-content">
-                          {renderVariableValue(safeValue, safeType)}
+                          {renderVariableValue(safeValue, safeType, varName)}
                         </div>
                       </div>
                     );

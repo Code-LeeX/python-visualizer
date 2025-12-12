@@ -5,7 +5,7 @@ import ast
 import copy
 import time
 from typing import Dict, List, Any, Optional, Union
-from ast_parser import ExecutionHook
+from ast_parser import ExecutionHook, IndexAccessAnalyzer
 
 class PythonObject:
     """自定义对象类，用于表示Python对象"""
@@ -46,6 +46,7 @@ class PythonInterpreter:
         self.output_buffer = []
         self.step_mode = False  # 单步模式标志
         self.should_stop = False  # 停止执行标志
+        self.recorded_animations_this_step = set()  # 防止同一步骤录制重复动画
 
     def _builtin_print(self, *args, **kwargs):
         """自定义print函数"""
@@ -100,6 +101,11 @@ class PythonInterpreter:
             # 再次检查停止标志（在延迟前）
             if self.should_stop:
                 raise ExecutionError("Execution stopped")
+
+            # 如果切换到新行，清空本步骤的动画记录
+            if hasattr(self, 'current_tracking_line') and self.current_tracking_line != node.lineno:
+                self.recorded_animations_this_step.clear()
+            self.current_tracking_line = node.lineno
 
             self.hook.current_line = node.lineno
             self.hook.record_step(
@@ -247,10 +253,25 @@ class PythonInterpreter:
                 obj = self.execute(target.value)
                 setattr(obj, target.attr, value)
 
-        # 如果检测到动画操作，记录动画信息
+        # 如果检测到动画操作，记录动画信息（仅在真正执行完成后）
         if animation_data:
-            animation_data['completed'] = True
-            self.hook.record_animation_step(animation_data)
+            # 创建动画标识符，防止同一行重复录制
+            animation_key = (
+                animation_data.get('line'),
+                animation_data.get('operation'),
+                animation_data.get('source_variable'),
+                animation_data.get('target_variable')
+            )
+
+            if animation_key not in self.recorded_animations_this_step:
+                animation_data['completed'] = True
+                # 添加执行步骤计数来确保唯一性
+                animation_data['step_count'] = self.hook.step_count
+                print(f"🔧 [Debug] Recording Assign animation: {animation_data}")
+                self.hook.record_animation_step(animation_data)
+                self.recorded_animations_this_step.add(animation_key)
+            else:
+                print(f"🔧 [Debug] Skipping duplicate Assign animation in same step: {animation_key}")
 
     def execute_AnnAssign(self, node: ast.AnnAssign) -> None:
         """执行带注解的赋值"""
@@ -299,20 +320,232 @@ class PythonInterpreter:
         """执行for循环"""
         iterable = self.execute(node.iter)
 
-        for item in iterable:
-            if isinstance(node.target, ast.Name):
-                self.set_variable(node.target.id, item)
+        # 检测是否为直接遍历容器（for item in container）
+        container_name = None
+        if isinstance(node.iter, ast.Name):
+            container_name = node.iter.id
 
-            for stmt in node.body:
-                self.execute(stmt)
-                if self.break_flag:
-                    self.break_flag = False
-                    return
-                if self.continue_flag:
-                    self.continue_flag = False
+        iterator_var_name = None
+        if isinstance(node.target, ast.Name):
+            iterator_var_name = node.target.id
+
+        # 检测是否为索引循环模式（for i in range(len(container))）
+        index_loop_info = self._detect_index_loop_pattern(node, iterator_var_name)
+
+        print(f"🔄 [For Loop] Starting loop: {iterator_var_name} in {container_name}")
+        if index_loop_info:
+            print(f"🔍 [Index Loop] Detected index loop: {iterator_var_name} -> {index_loop_info['container']}")
+
+        # 开始循环上下文（直接遍历或索引遍历）
+        if container_name and iterator_var_name:
+            # 直接遍历：for item in container
+            self.hook.push_iteration_context(container_name, iterator_var_name, node.lineno, 'direct')
+        elif index_loop_info and iterator_var_name:
+            # 索引遍历：for i in range(len(container)) 或双指针模式
+            pattern = index_loop_info.get('pattern', 'simple')
+            self.hook.push_iteration_context(index_loop_info['container'], iterator_var_name, node.lineno, pattern)
+
+        try:
+            for index, item in enumerate(iterable):
+                if isinstance(node.target, ast.Name):
+                    self.set_variable(node.target.id, item)
+
+                # 更新当前遍历索引（直接遍历或索引遍历）
+                if container_name and iterator_var_name:
+                    # 直接遍历：for item in container
+                    self.hook.update_iteration_index(iterator_var_name, index)
+                elif index_loop_info and iterator_var_name:
+                    # 索引遍历：for i in range(len(container))
+                    pattern = index_loop_info.get('pattern', 'simple')
+                    if pattern == 'dual_pointer':
+                        # 双指针模式：使用实际的值作为索引（item就是实际的索引值）
+                        self.hook.update_iteration_index(iterator_var_name, item)
+                    else:
+                        # 简单模式：使用enumerate索引
+                        self.hook.update_iteration_index(iterator_var_name, index)
+
+                # 检测并记录多索引访问（双指针模式）
+                active_container = container_name or (index_loop_info['container'] if index_loop_info else None)
+                if active_container:
+                    self._detect_and_record_multi_index_access(active_container)
+
+                # 发送包含变量信息的遍历状态
+                if active_container and iterator_var_name:
+                    if self.hook.emit_callback:
+                        iteration_event = {
+                            'step': self.hook.step_count,
+                            'line': node.lineno,
+                            'node_type': 'Iteration',
+                            'description': f"Iterating {iterator_var_name} in {active_container}[{index}]",
+                            'variables': self.get_all_variables(),
+                            'call_stack': list(self.hook.call_stack),
+                            'iteration_stack': self.hook.get_iteration_stack(),
+                            'timestamp': self.hook.step_count
+                        }
+                        self.hook.emit_callback(iteration_event)
+
+                for stmt in node.body:
+                    self.execute(stmt)
+                    if self.break_flag:
+                        self.break_flag = False
+                        return
+                    if self.continue_flag:
+                        self.continue_flag = False
+                        break
+                    if self.return_value is not None:
+                        return
+        finally:
+            # 循环结束后弹出上下文
+            if (container_name or index_loop_info) and iterator_var_name:
+                self.hook.pop_iteration_context(iterator_var_name)
+
+    def _detect_index_loop_pattern(self, for_node: ast.For, iterator_var_name: str) -> Optional[Dict]:
+        """
+        检测索引循环模式：
+        1. for i in range(len(container))
+        2. for j in range(i+1, len(container))  (双指针模式)
+        返回检测到的容器信息，如果不是索引循环则返回None
+        """
+        if not iterator_var_name:
+            return None
+
+        # 检测 range() 调用
+        if (isinstance(for_node.iter, ast.Call) and
+            isinstance(for_node.iter.func, ast.Name) and
+            for_node.iter.func.id == 'range'):
+
+            range_args = for_node.iter.args
+            container_name = None
+            range_pattern = None
+
+            # 模式1：range(len(container)) - 单参数
+            if len(range_args) == 1:
+                range_arg = range_args[0]
+                if (isinstance(range_arg, ast.Call) and
+                    isinstance(range_arg.func, ast.Name) and
+                    range_arg.func.id == 'len' and
+                    len(range_arg.args) == 1 and
+                    isinstance(range_arg.args[0], ast.Name)):
+
+                    container_name = range_arg.args[0].id
+                    range_pattern = 'simple'
+                    print(f"🔍 [Pattern Detection] Found range(len({container_name})) pattern")
+
+            # 模式2：range(start, len(container)) - 双参数（双指针模式）
+            elif len(range_args) == 2:
+                start_arg, end_arg = range_args
+
+                # 检查结束参数是否为 len(container)
+                if (isinstance(end_arg, ast.Call) and
+                    isinstance(end_arg.func, ast.Name) and
+                    end_arg.func.id == 'len' and
+                    len(end_arg.args) == 1 and
+                    isinstance(end_arg.args[0], ast.Name)):
+
+                    container_name = end_arg.args[0].id
+                    range_pattern = 'dual_pointer'
+
+                    # 分析起始参数（如 i+1）
+                    start_expr = self._analyze_range_start_expression(start_arg)
+                    print(f"🔍 [Pattern Detection] Found range({start_expr}, len({container_name})) dual-pointer pattern")
+
+            if container_name and range_pattern:
+                # 分析循环体内的索引访问模式
+                analyzer = IndexAccessAnalyzer(iterator_var_name)
+                for stmt in for_node.body:
+                    analyzer.visit(stmt)
+
+                # 检查是否有对应的container[index]访问
+                matching_accesses = [
+                    access for access in analyzer.container_accesses
+                    if access['container'] == container_name
+                ]
+
+                if matching_accesses:
+                    print(f"🔍 [Pattern Detection] Found {len(matching_accesses)} matching accesses: {container_name}[{iterator_var_name}]")
+                    return {
+                        'container': container_name,
+                        'index_var': iterator_var_name,
+                        'pattern': range_pattern,
+                        'accesses': matching_accesses
+                    }
+                else:
+                    print(f"🔍 [Pattern Detection] No matching {container_name}[{iterator_var_name}] accesses found in loop body")
+
+        return None
+
+    def _analyze_range_start_expression(self, start_node: ast.AST) -> str:
+        """分析range起始表达式，返回描述字符串"""
+        try:
+            if isinstance(start_node, ast.Name):
+                return start_node.id
+            elif isinstance(start_node, ast.BinOp):
+                if isinstance(start_node.left, ast.Name) and isinstance(start_node.op, ast.Add):
+                    if isinstance(start_node.right, ast.Constant):
+                        return f"{start_node.left.id}+{start_node.right.value}"
+                    elif isinstance(start_node.right, ast.Name):
+                        return f"{start_node.left.id}+{start_node.right.id}"
+            return "expression"
+        except:
+            return "complex_expression"
+
+    def _detect_and_record_multi_index_access(self, container_name: str):
+        """检测并记录对同一容器的多索引访问（双指针模式）"""
+        if not self.hook.iteration_stack:
+            return
+
+        # 收集所有访问该容器的循环上下文
+        accessing_contexts = []
+        for context in self.hook.iteration_stack:
+            if (context.get('container') == container_name and
+                context.get('current_index', -1) >= 0):  # 确保已开始遍历
+                accessing_contexts.append(context)
+
+        # 如果有多个上下文访问同一容器，记录多索引访问
+        if len(accessing_contexts) >= 2:
+            indices = []
+            index_vars = []
+
+            for context in accessing_contexts:
+                indices.append(context['current_index'])
+                index_vars.append(context['iterator_var'])
+
+            # 记录多索引访问
+            self.hook.record_multi_index_access(container_name, indices, index_vars)
+            print(f"🔄 [Multi-Index Detection] Found {len(accessing_contexts)} simultaneous accesses to {container_name}: {dict(zip(index_vars, indices))}")
+
+    def _detect_slice_access(self, container_name: str, slice_node: ast.Slice):
+        """检测切片操作中的迭代变量使用"""
+        if not self.hook.iteration_stack:
+            return
+
+        start_var = None
+        end_var = None
+        start_idx = None
+        end_idx = None
+
+        # 检查start位置
+        if isinstance(slice_node.lower, ast.Name):
+            start_var = slice_node.lower.id
+            # 查找这个变量是否是当前的迭代变量
+            for context in self.hook.iteration_stack:
+                if context['iterator_var'] == start_var and context.get('current_index', -1) >= 0:
+                    start_idx = context['current_index']
                     break
-                if self.return_value is not None:
-                    return
+
+        # 检查end位置
+        if isinstance(slice_node.upper, ast.Name):
+            end_var = slice_node.upper.id
+            # 查找这个变量是否是当前的迭代变量
+            for context in self.hook.iteration_stack:
+                if context['iterator_var'] == end_var and context.get('current_index', -1) >= 0:
+                    end_idx = context['current_index']
+                    break
+
+        # 如果start和end都是迭代变量，记录切片访问
+        if start_var and end_var and start_idx is not None and end_idx is not None:
+            self.hook.record_slice_access(container_name, start_idx, end_idx, start_var, end_var)
+            print(f"🔄 [Slice Detection] Found slice access: {container_name}[{start_var}:{end_var}] = {container_name}[{start_idx}:{end_idx}]")
 
     def execute_Break(self, node: ast.Break) -> None:
         """执行break语句"""
@@ -380,8 +613,29 @@ class PythonInterpreter:
     def execute_Subscript(self, node: ast.Subscript) -> Any:
         """执行下标访问"""
         obj = self.execute(node.value)
+
+        # 检测切片操作中的双指针模式
+        if isinstance(node.slice, ast.Slice) and isinstance(node.value, ast.Name):
+            container_name = node.value.id
+            self._detect_slice_access(container_name, node.slice)
+
         key = self.execute(node.slice)
         return obj[key]
+
+    def execute_Slice(self, node: ast.Slice) -> slice:
+        """执行切片操作"""
+        start = None
+        stop = None
+        step = None
+
+        if node.lower:
+            start = self.execute(node.lower)
+        if node.upper:
+            stop = self.execute(node.upper)
+        if node.step:
+            step = self.execute(node.step)
+
+        return slice(start, stop, step)
 
     def execute_Attribute(self, node: ast.Attribute) -> Any:
         """执行属性访问"""
@@ -399,10 +653,25 @@ class PythonInterpreter:
 
         result = func(*args, **kwargs)
 
-        # 如果检测到动画操作，记录动画信息
+        # 如果检测到动画操作，记录动画信息（仅在真正执行完成后）
         if animation_data:
-            animation_data['completed'] = True
-            self.hook.record_animation_step(animation_data)
+            # 创建动画标识符，防止同一行重复录制
+            animation_key = (
+                animation_data.get('line'),
+                animation_data.get('operation'),
+                animation_data.get('source_variable'),
+                animation_data.get('target_variable')
+            )
+
+            if animation_key not in self.recorded_animations_this_step:
+                animation_data['completed'] = True
+                # 添加执行步骤计数来确保唯一性
+                animation_data['step_count'] = self.hook.step_count
+                print(f"🔧 [Debug] Recording Call animation: {animation_data}")
+                self.hook.record_animation_step(animation_data)
+                self.recorded_animations_this_step.add(animation_key)
+            else:
+                print(f"🔧 [Debug] Skipping duplicate Call animation in same step: {animation_key}")
 
         return result
 
@@ -564,7 +833,8 @@ class PythonInterpreter:
                                 'source_value': source_value,
                                 'target_variable': target_obj,
                                 'line': node.lineno,
-                                'animation_type': 'assignment_operation'
+                                'animation_type': 'assignment_operation',
+                                'step_count': self.hook.step_count  # 添加步骤计数
                             }
 
             return None
@@ -599,6 +869,17 @@ class PythonInterpreter:
                             elif isinstance(arg, ast.Constant):
                                 source_value = arg.value
                                 break
+                            elif isinstance(arg, ast.Subscript):
+                                # 处理切片操作，如 a[1:3]
+                                if isinstance(arg.value, ast.Name):
+                                    source_var = arg.value.id
+                                    try:
+                                        # 计算切片表达式的值
+                                        source_value = self.execute(arg)
+                                    except Exception as e:
+                                        print(f"Error evaluating slice expression: {e}")
+                                        continue
+                                    break
 
                         if source_var or source_value is not None:
                             return {
@@ -608,7 +889,8 @@ class PythonInterpreter:
                                 'source_value': source_value,
                                 'target_variable': target_obj,
                                 'line': node.lineno,
-                                'animation_type': 'list_operation'
+                                'animation_type': 'list_operation',
+                                'step_count': self.hook.step_count  # 添加步骤计数
                             }
 
                 # 检测字典操作等其他方法调用
@@ -620,7 +902,8 @@ class PythonInterpreter:
                             'operation': attr_name,
                             'target_variable': target_obj,
                             'line': node.lineno,
-                            'animation_type': 'dict_operation'
+                            'animation_type': 'dict_operation',
+                            'step_count': self.hook.step_count  # 添加步骤计数
                         }
 
             return None

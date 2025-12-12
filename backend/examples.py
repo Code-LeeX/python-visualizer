@@ -7,22 +7,11 @@ examples = [
         "id": "basic_variables",
         "title": "🔢 基础变量类型",
         "code": """# 基础变量类型演示
-x = 42
-pi = 3.14159
-name = "Python"
-is_active = True
-empty_value = None
-
-# 变量值的修改
-x = x + 8
-pi = round(pi, 2)
-name = name + "编程"
-is_active = not is_active
-
-print(f"整数: {x}")
-print(f"浮点数: {pi}")
-print(f"字符串: {name}")
-print(f"布尔值: {is_active}")
+mystr = "hello"
+for i in range(len(mystr)):
+    for j in range(i+1, len(mystr)):
+        c = mystr[i:j]
+        print(c)
 """,
         "inputs": ""
     },
